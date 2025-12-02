@@ -7,6 +7,7 @@ import torch
 import torch.nn as nn
 import torchvision
 import torchvision.transforms as transforms
+import os
 
 
 class TanhScaled(nn.Module):
@@ -14,38 +15,51 @@ class TanhScaled(nn.Module):
         return 1.7159 * torch.tanh((2.0 / 3.0) * x)
 
 def load_digit_codes():
-    # Load MNIST training data
-    splits = {'train': 'mnist/train-00000-of-00001.parquet'}
-    df_train = pd.read_parquet("hf://datasets/ylecun/mnist/" + splits["train"])
+    
+    # Path to the digits dataset
+    data_root = os.path.join(os.path.dirname(__file__), "digits updated")
     
     # Initialize accumulator for mean images per digit
-    digit_sums = {i: np.zeros((28, 28), dtype=np.float64) for i in range(10)}
-    digit_counts = {i: 0 for i in range(10)}
+    digit_sums = {i: [] for i in range(10)}
     
-    # Accumulate all images for each digit - binarize BEFORE averaging
-    for idx, row in df_train.iterrows():
-        label = row['label']
+    # Load and binarize images for each digit
+    for digit in range(10):
+        digit_dir = os.path.join(data_root, str(digit))
         
-        # Load image from bytes
-        image_bytes = row['image.bytes']
-        image = Image.open(BytesIO(image_bytes))
+        # Use first 100 images per digit (or all if less than 100)
+        image_files = sorted(os.listdir(digit_dir))[:100]
         
-        # Convert PIL image to numpy array
-        img_array = np.array(image, dtype=np.float64)
-        
-        # Binarize individual images: pixels < 128 -> 0, else -> 255
-        img_binarized = np.where(img_array < 128, 0, 255).astype(np.float64)
-        
-        digit_sums[label] += img_binarized
-        digit_counts[label] += 1
+        for img_file in image_files:
+            if img_file.startswith('.'):  # Skip hidden files
+                continue
+                
+            img_path = os.path.join(digit_dir, img_file)
+            
+            try:
+                # Load image
+                img = Image.open(img_path).convert('L')
+                
+                # Binarize: pixels < 128 -> 0, else -> 255
+                img_array = np.array(img, dtype=np.float32)
+                img_binarized = np.where(img_array < 128, 0, 255)
+                
+                digit_sums[digit].append(img_binarized)
+            except Exception as e:
+                print(f"Error loading {img_path}: {e}")
+                continue
     
     # Compute mean and resize to 12x7
     mu = torch.zeros(10, 84)
     resize_transform = transforms.Resize((12, 7), antialias=True)
     
     for digit in range(10):
-        # Compute mean of binarized images
-        mean_img = digit_sums[digit] / digit_counts[digit]
+        if len(digit_sums[digit]) == 0:
+            print(f"Warning: No images found for digit {digit}")
+            continue
+            
+        # Stack and compute mean of binarized images
+        stacked = np.stack(digit_sums[digit])
+        mean_img = np.mean(stacked, axis=0)
         
         # Convert to tensor and add channel dimension
         mean_tensor = torch.from_numpy(mean_img).float().unsqueeze(0)
@@ -151,7 +165,7 @@ def visualize_digit_codes(save_path='digit_bitmaps.png'):
         bitmap = mu_codes[digit].reshape(12, 7).numpy()
         
         # Display
-        im = ax.imshow(bitmap, cmap='gray', interpolation='nearest')
+        im = ax.imshow(bitmap, cmap='gray_r', interpolation='nearest')
         ax.set_title(f'Digit {digit}', fontsize=12)
         ax.axis('off')
         
