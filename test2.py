@@ -1,5 +1,5 @@
 import sys
-sys.path.append('.')
+sys.path.append('lenet2')
 
 from torch.utils.data import DataLoader, Dataset
 import torch
@@ -36,14 +36,13 @@ class MNISTParquet(Dataset):
         
         # Load image
         image = Image.open(BytesIO(image_bytes))
-        image_raw = np.array(image)  # Keep raw for visualization
-        image = torch.from_numpy(image_raw).unsqueeze(0).float()
+        image = torch.from_numpy(np.array(image)).unsqueeze(0).float()
         
         # Apply transform
         if self.transform:
             image = self.transform(image)
         
-        return image, label, image_raw
+        return image, label
 
 def test(dataloader, model, device):
     """
@@ -63,7 +62,7 @@ def test(dataloader, model, device):
     misclassifications = {i: [] for i in range(10)}
     
     with torch.no_grad():
-        for batch_idx, (images, labels, images_raw) in enumerate(dataloader):
+        for batch_idx, (images, labels) in enumerate(dataloader):
             images, labels = images.to(device), labels.to(device)
             
             # Forward pass - get distances
@@ -90,8 +89,11 @@ def test(dataloader, model, device):
                     # We want high confidence mistakes (very small distance to wrong class)
                     confidence = -distances[i, pred_label].item()
                     
+                    # Convert image back to numpy for visualization (remove padding and channel dim)
+                    image_raw = images[i].cpu().squeeze(0).numpy()[2:-2, 2:-2]  # Remove padding to get 28x28
+                    
                     misclassifications[true_label].append(
-                        (confidence, pred_label, images_raw[i].numpy(), true_label, batch_idx)
+                        (confidence, pred_label, image_raw, true_label, batch_idx)
                     )
     
     test_accuracy = correct / total
@@ -111,7 +113,7 @@ def plot_confusion_matrix(confusion_matrix, save_path='lenet2_confusion_matrix.p
                 cbar_kws={'label': 'Percentage'}, vmin=0, vmax=1)
     plt.xlabel('Predicted Label', fontsize=12)
     plt.ylabel('True Label', fontsize=12)
-    plt.title('Confusion Matrix (10×10) - Normalized', fontsize=14)
+    plt.title('Confusion Matrix (10x10) - Normalized', fontsize=14)
     plt.tight_layout()
     plt.savefig(save_path, dpi=150)
     print(f'Confusion matrix saved to {save_path}')
@@ -164,6 +166,8 @@ def main():
     print('Loading test dataset...')
     mnist_test = MNISTParquet(split='test', transform=pad)
     test_dataloader = DataLoader(mnist_test, batch_size=1, shuffle=False)
+
+    #test_dataloader = TA DATASET
     
     # Load trained model
     print('Loading trained model...')
